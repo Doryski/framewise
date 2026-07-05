@@ -26,12 +26,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/doryski/framewise.git"
+    "url": "git+https://github.com/Doryski/framewise.git"
   },
   "bugs": {
-    "url": "https://github.com/doryski/framewise/issues"
+    "url": "https://github.com/Doryski/framewise/issues"
   },
-  "homepage": "https://github.com/doryski/framewise#readme",
+  "homepage": "https://github.com/Doryski/framewise#readme",
   "keywords": [
     "video",
     "frames",
