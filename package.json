@@ -59,7 +59,7 @@
     "ffmpeg-static": "^5.2.0"
   },
   "devDependencies": {
-    "@doryski/release": "^1.0.0",
+    "@doryski/release": "^1.1.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "eslint": "^10.2.0",
