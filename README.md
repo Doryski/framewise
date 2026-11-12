@@ -64,6 +64,9 @@ framewise demo.mp4 --blur-threshold 50 --scene-detection
 
 # WebP output, machine-readable result
 framewise demo.mp4 --format webp --quality 70 --json
+
+# Tighter limits for untrusted uploads
+framewise upload.mp4 --max-raw-frames 600 --max-duration 300 --timeout 60000
 ```
 
 ## API reference
@@ -76,10 +79,14 @@ Extracts, filters and renumbers frames into `outputDir` (created recursively). R
 
 | Option             | Type                                  | Default     | Description                                                             |
 | ------------------ | ------------------------------------- | ----------- | --------------------------------------------------------------------- |
-| `fps`              | `number`                              | `5`         | Frames per second to sample from the video.                            |
+| `fps`              | `number` (> 0, ≤ 60)                  | `5`         | Frames per second to sample from the video.                            |
 | `format`           | `'jpeg' \| 'png' \| 'webp'`           | `'jpeg'`    | Output image format.                                                   |
 | `quality`          | `number` (0–100)                      | `85`        | Output quality, mapped to ffmpeg `-q:v`.                               |
-| `maxFrames`        | `number`                              | `undefined` | Caps discretionary frames via even sampling; always retains first, last and scene-cut transitions. |
+| `maxFrames`        | `number` (positive integer)           | `undefined` | Caps discretionary frames via even sampling; always retains first, last and scene-cut transitions. |
+| `maxRawFrames`     | `number` (positive integer)           | `3000` (`DEFAULT_MAX_RAW_FRAMES`) | Hard cap on raw frames ffmpeg writes in the sampling pass (`-frames:v`). Selection only sees these candidates. |
+| `maxDurationSec`   | `number` (> 0)                        | `1800` (`DEFAULT_MAX_DURATION_SEC`) | Only the first N seconds of input are read and decoded (input-side `-t`). |
+| `timeoutMs`        | `number` (positive integer)           | `300000` (`DEFAULT_TIMEOUT_MS`) | Each ffmpeg extraction run is killed (`SIGKILL`) and the call rejects after this long. |
+| `probeTimeoutMs`   | `number` (positive integer)           | `30000` (`DEFAULT_PROBE_TIMEOUT_MS`) | Timeout for the `ffmpeg -version` probe used to locate the binary. |
 | `dedupe`           | `boolean`                             | `true`      | Enable dHash + Hamming-distance deduplication.                         |
 | `dedupeThreshold`  | `number`                              | `8`         | Min Hamming distance from the last kept frame required to keep.        |
 | `blurThreshold`    | `number`                              | `undefined` | Min Laplacian variance to keep; disabled when unset.                   |
@@ -88,6 +95,12 @@ Extracts, filters and renumbers frames into `outputDir` (created recursively). R
 | `includeFirstLast` | `boolean`                             | `true`      | Always include the video's first and last frames.                     |
 | `ffmpegPath`       | `string`                              | `undefined` | Override the ffmpeg binary path.                                       |
 | `onProgress`       | `(e) => void`                         | `undefined` | Progress callback fired at `extracting`/`analyzing`/`selecting`/`writing`. |
+
+Options are validated before any subprocess is spawned; an out-of-range or non-finite value throws an `Error` starting with `Invalid <option>`. `findOptionErrors(options)` and `assertValidOptions(options)` are exported so callers can validate up front.
+
+#### Untrusted input
+
+The input video is treated as attacker-controlled: ffmpeg runs via `execFile` with an argument array, with `-nostdin` and `-y` (it can never block on a prompt), with absolute input/output paths (a file named `-foo.mp4` cannot be parsed as an option), and under the `maxRawFrames`, `maxDurationSec` and `timeoutMs` limits above, so a tiny crafted file with a huge duration or timestamp gap cannot make ffmpeg write millions of frames or run forever.
 
 #### `ExtractResult`
 
@@ -115,7 +128,7 @@ Individually exported and unit-tested:
 
 ## How selection works
 
-1. **Extract** — one ffmpeg pass samples frames at `fps`; first/last frames are pulled separately when `includeFirstLast` is on.
+1. **Extract** — one ffmpeg pass samples frames at `fps`, reading at most `maxDurationSec` of input and writing at most `maxRawFrames` frames; first/last frames are pulled separately when `includeFirstLast` is on.
 2. **Analyze** — compute a dHash and a Laplacian-variance sharpness score for every extracted frame.
 3. **Blur gate** — if `blurThreshold` is set, drop frames below it (first/last are never dropped).
 4. **Scene cuts** — if `sceneDetection` is on, mark frames whose downscaled mean-abs-diff from the previous frame ≥ `sceneThreshold` as force-keeps.
@@ -125,7 +138,7 @@ Individually exported and unit-tested:
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 20.9.0 (required by `sharp` 0.35)
 - An `ffmpeg` binary on `PATH`, or the optional `ffmpeg-static` dependency.
 
 ## Contributing

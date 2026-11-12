@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `maxRawFrames` (default `3000`) and `maxDurationSec` (default `1800`)
+  options, passed to ffmpeg as `-frames:v` and an input-side `-t`, so a crafted
+  video can no longer make the sampling pass write an unbounded number of frames.
+- `timeoutMs` (default 5 minutes per ffmpeg run) and `probeTimeoutMs` (default
+  30 seconds for the `ffmpeg -version` probe); a timed-out process is killed and
+  the call rejects with a clear error.
+- CLI flags `--max-raw-frames`, `--max-duration` and `--timeout`.
+- Exported `FRAME_FORMATS`, `LIMITS`, `DEFAULT_MAX_RAW_FRAMES`,
+  `DEFAULT_MAX_DURATION_SEC`, `DEFAULT_TIMEOUT_MS`, `DEFAULT_PROBE_TIMEOUT_MS`,
+  `findOptionErrors` and `assertValidOptions`.
+
+### Changed
+
+- **Breaking:** options are validated before ffmpeg is spawned. `fps` must be
+  in (0, 60], `maxFrames` a positive integer (`0` or negative values no longer
+  silently disable the cap), `quality` in [0, 100]; invalid values throw.
+- **Breaking:** requires Node.js >= 20.9.0.
+- ffmpeg always runs with `-nostdin -y -hide_banner -loglevel error` and gets
+  absolute input/output paths, so a leftover file can never trigger an
+  interactive prompt and a path starting with `-` cannot be read as an option.
+
+### Security
+
+- Upgraded `sharp` from 0.33.5 to 0.35.5, picking up fixes for high-severity
+  advisories in the bundled libvips, libheif and librsvg.
+
 ## [0.1.0] - 2026-07-05
 
 ### Added

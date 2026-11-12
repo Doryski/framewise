@@ -49,11 +49,11 @@
   "author": "Dominik Rycharski (https://github.com/Doryski)",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=20.9.0"
   },
   "dependencies": {
     "commander": "^14.0.3",
-    "sharp": "^0.33.5"
+    "sharp": "^0.35.5"
   },
   "optionalDependencies": {
     "ffmpeg-static": "^5.2.0"

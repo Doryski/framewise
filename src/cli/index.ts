@@ -3,14 +3,21 @@ import { basename, dirname, extname, join } from 'node:path';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { Command } from 'commander';
-import { extractFrames, type ExtractOptions, type FrameFormat } from '../index.js';
+import {
+  assertValidOptions,
+  DEFAULT_MAX_DURATION_SEC,
+  DEFAULT_MAX_RAW_FRAMES,
+  DEFAULT_TIMEOUT_MS,
+  extractFrames,
+  FRAME_FORMATS,
+  LIMITS,
+  type ExtractOptions,
+} from '../index.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf8')) as {
   version: string;
 };
-
-const VALID_FORMATS = ['jpeg', 'png', 'webp'] as const;
 
 function toNumber(value: string, name: string): number {
   const n = Number(value);
@@ -27,7 +34,10 @@ function defaultOutputDir(videoPath: string): string {
 type CliOptions = {
   fps?: string;
   maxFrames?: string;
-  format?: FrameFormat;
+  maxRawFrames?: string;
+  maxDuration?: string;
+  timeout?: string;
+  format?: string;
   quality?: string;
   dedupe: boolean;
   dedupeThreshold?: string;
@@ -47,8 +57,17 @@ program
   .version(pkg.version, '-v, --version', 'output the version number')
   .argument('<video>', 'path to the input video file')
   .argument('[outputDir]', 'directory to write frames into (default: <video>-frames)')
-  .option('--fps <n>', 'frames per second to sample (default 5)')
-  .option('--max-frames <n>', 'cap the number of kept frames')
+  .option('--fps <n>', `frames per second to sample, > 0 and <= ${LIMITS.maxFps} (default 5)`)
+  .option('--max-frames <n>', 'cap the number of kept frames (positive integer)')
+  .option(
+    '--max-raw-frames <n>',
+    `hard cap on raw frames ffmpeg may write (default ${DEFAULT_MAX_RAW_FRAMES})`
+  )
+  .option(
+    '--max-duration <sec>',
+    `only process this many seconds of input (default ${DEFAULT_MAX_DURATION_SEC})`
+  )
+  .option('--timeout <ms>', `kill each ffmpeg run after this many ms (default ${DEFAULT_TIMEOUT_MS})`)
   .option('--format <fmt>', 'output image format: jpeg | png | webp (default jpeg)')
   .option('--quality <n>', 'output quality 0-100 (default 85)')
   .option('--no-dedupe', 'disable perceptual-hash deduplication')
@@ -87,14 +106,20 @@ Examples:
     try {
       if (opts.fps !== undefined) options.fps = toNumber(opts.fps, '--fps');
       if (opts.maxFrames !== undefined) options.maxFrames = toNumber(opts.maxFrames, '--max-frames');
+      if (opts.maxRawFrames !== undefined)
+        options.maxRawFrames = toNumber(opts.maxRawFrames, '--max-raw-frames');
+      if (opts.maxDuration !== undefined)
+        options.maxDurationSec = toNumber(opts.maxDuration, '--max-duration');
+      if (opts.timeout !== undefined) options.timeoutMs = toNumber(opts.timeout, '--timeout');
       if (opts.format !== undefined) {
-        if (!VALID_FORMATS.includes(opts.format)) {
+        const format = FRAME_FORMATS.find((f) => f === opts.format);
+        if (!format) {
           process.stderr.write(
-            `Error: Invalid value for --format: ${opts.format}. Expected one of: ${VALID_FORMATS.join(', ')}.\n`
+            `Error: Invalid value for --format: ${opts.format}. Expected one of: ${FRAME_FORMATS.join(', ')}.\n`
           );
           process.exit(1);
         }
-        options.format = opts.format;
+        options.format = format;
       }
       if (opts.quality !== undefined) options.quality = toNumber(opts.quality, '--quality');
       if (opts.dedupeThreshold !== undefined)
@@ -105,6 +130,7 @@ Examples:
       if (opts.sceneThreshold !== undefined)
         options.sceneThreshold = toNumber(opts.sceneThreshold, '--scene-threshold');
       if (opts.ffmpegPath !== undefined) options.ffmpegPath = opts.ffmpegPath;
+      assertValidOptions(options);
 
       const target = outputDir ?? defaultOutputDir(video);
       const result = await extractFrames(video, target, options);

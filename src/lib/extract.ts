@@ -1,19 +1,31 @@
 import { existsSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { cpus } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { computeDHash, hammingDistance } from './hash.js';
 import { downscaleGrey, sceneDiffBuffers } from './scene.js';
 import { computeSharpness } from './sharpness.js';
 import { qualityToScale, resolveFfmpegBinary, runFfmpeg } from './ffmpeg.js';
+import {
+  assertValidOptions,
+  DEFAULT_MAX_DURATION_SEC,
+  DEFAULT_MAX_RAW_FRAMES,
+  DEFAULT_PROBE_TIMEOUT_MS,
+  DEFAULT_TIMEOUT_MS,
+  type FrameFormat,
+} from './options.js';
 
-export type FrameFormat = 'jpeg' | 'png' | 'webp';
+export type { FrameFormat } from './options.js';
 
 export type ExtractOptions = {
   fps?: number;
   format?: FrameFormat;
   quality?: number;
   maxFrames?: number;
+  maxRawFrames?: number;
+  maxDurationSec?: number;
+  timeoutMs?: number;
+  probeTimeoutMs?: number;
   dedupe?: boolean;
   dedupeThreshold?: number;
   blurThreshold?: number;
@@ -61,6 +73,10 @@ const DEFAULTS = {
   dedupeThreshold: 8,
   sceneThreshold: 0.08,
   includeFirstLast: true,
+  maxRawFrames: DEFAULT_MAX_RAW_FRAMES,
+  maxDurationSec: DEFAULT_MAX_DURATION_SEC,
+  timeoutMs: DEFAULT_TIMEOUT_MS,
+  probeTimeoutMs: DEFAULT_PROBE_TIMEOUT_MS,
 } as const;
 
 function extFor(format: FrameFormat): string {
@@ -78,24 +94,67 @@ type ExtractedFrame = {
   forcedReason?: 'first' | 'last';
 };
 
-async function extractRawFrames(
-  binary: string,
-  videoPath: string,
-  outputDir: string,
-  fps: number,
-  ext: string,
-  qScale: number,
-  includeFirstLast: boolean
-): Promise<ExtractedFrame[]> {
-  await runFfmpeg(binary, [
-    '-i',
-    videoPath,
+type RawExtractionConfig = {
+  binary: string;
+  videoPath: string;
+  outputDir: string;
+  fps: number;
+  ext: string;
+  qScale: number;
+  includeFirstLast: boolean;
+  maxRawFrames: number;
+  maxDurationSec: number;
+  timeoutMs: number;
+};
+
+function inputArgs(config: RawExtractionConfig): string[] {
+  return ['-t', String(config.maxDurationSec), '-i', resolve(config.videoPath)];
+}
+
+function sampledFramesArgs(config: RawExtractionConfig): string[] {
+  return [
+    ...inputArgs(config),
     '-vf',
-    `fps=${fps}`,
+    `fps=${config.fps}`,
+    '-frames:v',
+    String(config.maxRawFrames),
     '-q:v',
-    String(qScale),
-    join(outputDir, `raw-%05d.${ext}`),
-  ]);
+    String(config.qScale),
+    resolve(config.outputDir, `raw-%05d.${config.ext}`),
+  ];
+}
+
+function firstFrameArgs(config: RawExtractionConfig, firstPath: string): string[] {
+  return [
+    ...inputArgs(config),
+    '-vf',
+    'select=eq(n\\,0)',
+    '-update',
+    '1',
+    '-frames:v',
+    '1',
+    '-q:v',
+    String(config.qScale),
+    resolve(firstPath),
+  ];
+}
+
+function lastFrameArgs(config: RawExtractionConfig, lastPath: string): string[] {
+  return [
+    '-sseof',
+    '-1',
+    ...inputArgs(config),
+    '-update',
+    '1',
+    '-q:v',
+    String(config.qScale),
+    resolve(lastPath),
+  ];
+}
+
+async function extractRawFrames(config: RawExtractionConfig): Promise<ExtractedFrame[]> {
+  const { binary, outputDir, fps, ext, includeFirstLast, timeoutMs } = config;
+  await runFfmpeg(binary, sampledFramesArgs(config), timeoutMs);
 
   const regularPaths = readdirSync(outputDir)
     .filter((f) => new RegExp(`^raw-\\d{5}\\.${ext}$`).test(f))
@@ -111,32 +170,10 @@ async function extractRawFrames(
   if (!includeFirstLast) return regular;
 
   const firstPath = join(outputDir, `raw-first.${ext}`);
-  await runFfmpeg(binary, [
-    '-i',
-    videoPath,
-    '-vf',
-    'select=eq(n\\,0)',
-    '-update',
-    '1',
-    '-vframes',
-    '1',
-    '-q:v',
-    String(qScale),
-    firstPath,
-  ]);
+  await runFfmpeg(binary, firstFrameArgs(config, firstPath), timeoutMs);
 
   const lastPath = join(outputDir, `raw-last.${ext}`);
-  await runFfmpeg(binary, [
-    '-sseof',
-    '-1',
-    '-i',
-    videoPath,
-    '-update',
-    '1',
-    '-q:v',
-    String(qScale),
-    lastPath,
-  ]);
+  await runFfmpeg(binary, lastFrameArgs(config, lastPath), timeoutMs);
 
   const lastTs = regular.length > 0 ? regular[regular.length - 1].timestampSec + 1 / fps : 0;
 
@@ -179,6 +216,8 @@ export async function extractFrames(
   outputDir: string,
   options: ExtractOptions = {}
 ): Promise<ExtractResult> {
+  assertValidOptions(options);
+
   if (!existsSync(videoPath)) {
     throw new Error(`Video file not found: ${videoPath}`);
   }
@@ -191,10 +230,14 @@ export async function extractFrames(
   const sceneDetection = options.sceneDetection ?? false;
   const sceneThreshold = options.sceneThreshold ?? DEFAULTS.sceneThreshold;
   const includeFirstLast = options.includeFirstLast ?? DEFAULTS.includeFirstLast;
+  const maxRawFrames = options.maxRawFrames ?? DEFAULTS.maxRawFrames;
+  const maxDurationSec = options.maxDurationSec ?? DEFAULTS.maxDurationSec;
+  const timeoutMs = options.timeoutMs ?? DEFAULTS.timeoutMs;
+  const probeTimeoutMs = options.probeTimeoutMs ?? DEFAULTS.probeTimeoutMs;
   const { blurThreshold, maxFrames } = options;
   const progress = options.onProgress ?? (() => {});
 
-  const binary = await resolveFfmpegBinary(options.ffmpegPath);
+  const binary = await resolveFfmpegBinary(options.ffmpegPath, probeTimeoutMs);
   if (!binary) {
     throw new Error(
       'ffmpeg not found. Install ffmpeg and ensure it is on your PATH, add the optional ffmpeg-static dependency, or pass ffmpegPath.'
@@ -206,15 +249,18 @@ export async function extractFrames(
   const qScale = qualityToScale(quality);
 
   progress({ phase: 'extracting' });
-  const extracted = await extractRawFrames(
+  const extracted = await extractRawFrames({
     binary,
     videoPath,
     outputDir,
     fps,
     ext,
     qScale,
-    includeFirstLast
-  );
+    includeFirstLast,
+    maxRawFrames,
+    maxDurationSec,
+    timeoutMs,
+  });
 
   if (extracted.length === 0) {
     throw new Error('No frames were extracted from the video.');
