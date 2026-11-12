@@ -1,6 +1,6 @@
 {
   "name": "framewise",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Turn a video into a lean, deduplicated, high-quality set of frames — ideal for feeding vision LLMs within a token budget",
   "type": "module",
   "main": "dist/index.js",
